@@ -1,8 +1,6 @@
 # ExcelDataGenerator
-===============
 The tool generates excel file (.xlsx) of desired size based on the sample excel file provided by user.
-It reads the first 1000 rows of sample excel and keeps repeating the same rows in output excel to generate the file of
-desired size.
+It reads the first 1000 rows of sample excel and keeps repeating the same rows in output excel to generate the file of desired size.
 
 ## Finding the binaries
 The compiled binaries are available in the Binaries folder. Download entire folder, use
