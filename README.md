@@ -6,7 +6,7 @@ It reads the first 1000 rows of user provided sample excel file and keeps repeat
 Useful for generating excel files of different sizes.
 
 ## Finding the binaries
-The compiled binaries are available in the release. Download all files in binaries folder, use
+The compiled binaries are available in the release. Download binaries files, use
 FileGenerator.exe and FileGenerator.exe.config to generate excel files.
 
 ## How to use
