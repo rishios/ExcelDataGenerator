@@ -18,17 +18,19 @@ namespace FileGenerator
             NameValueCollection nvc = ConfigurationManager.AppSettings;
             string sampleFilePath = nvc.Get("SampleFilePath");
             string outputFilePath = nvc.Get("OutputFilePath");
-            int sizeOfOutputFileInMb = 0;
+            int sizeOfOutputFileInMb;
+            bool isFirstRowAsColumnNames;
             Int32.TryParse(nvc.Get("SizeOfOutputFileInMb"), out sizeOfOutputFileInMb);
+            bool.TryParse(nvc.Get("IsFirstRowAsColumnNames"), out isFirstRowAsColumnNames);
             bool isInputValid = true;
             if (!File.Exists(Path.GetFullPath(sampleFilePath)))
             {
-                Console.WriteLine("Please create sample file and provide proper file path in the App.config.");
+                Console.WriteLine("Please create sample file and provide proper file path in the FileGenerator.exe.config.");
                 isInputValid = false;
             }
             if (isInputValid && sizeOfOutputFileInMb < 1)
             {
-                Console.WriteLine("Please provide proper size of output file to be generated in the App.config.");
+                Console.WriteLine("Please provide proper size of output file to be generated in the FileGenerator.exe.config.");
                 isInputValid = false;
             }
 
@@ -41,58 +43,62 @@ namespace FileGenerator
 
             if (isInputValid)
             {
-                GenerateFile(sampleFilePath, outputFilePath, sizeOfOutputFileInMb);
+                GenerateFile(isFirstRowAsColumnNames, sampleFilePath, outputFilePath, sizeOfOutputFileInMb);
             }
 
             Console.ReadLine();
         }
 
-        private static void GenerateFile(string sampleFilePath, string outputFilePath, int sizeOfOutputFileInMb)
+        private static void GenerateFile(bool isFirstRowAsColumnNames, string sampleFilePath, string outputFilePath, int sizeOfOutputFileInMb)
         {
-            string fistSheetName = string.Empty;
-            int batchSize = 0;
+            string firstSheetName = string.Empty;
+            int batchSize, desiredRows, sizeOfBatchInKb;
             DataTable datatable = null, batchSizeDataTable = null;
             FileInfo destFileInfo = new FileInfo(outputFilePath);
-
+            Console.WriteLine("Process started...");
             using (IExcelDataReader excelReader = ExcelReaderFactory.CreateOpenXmlReader(File.OpenRead(sampleFilePath)))
             {
                 if (!excelReader.IsValid) { throw new Exception(excelReader.ExceptionMessage); }
                 // Read one sheet of excel in batch
-                excelReader.SheetName = fistSheetName = excelReader.GetSheetNames().FirstOrDefault();
-                excelReader.IsFirstRowAsColumnNames = true;
+                excelReader.SheetName = firstSheetName = excelReader.GetSheetNames().FirstOrDefault();
+                excelReader.IsFirstRowAsColumnNames = isFirstRowAsColumnNames;
                 if (excelReader.ReadBatch())
                 {
                     datatable = excelReader.GetCurrentBatch();
                 }
             }
-            batchSize = 10000;
-            batchSizeDataTable = datatable.Clone();
-            if (datatable.Rows.Count < batchSize)
-            {
-                while (batchSizeDataTable.Rows.Count < batchSize)
-                {
-                    datatable.AsEnumerable().CopyToDataTable(batchSizeDataTable, LoadOption.Upsert);
-                }
-                batchSizeDataTable = batchSizeDataTable.AsEnumerable().Take(batchSize).CopyToDataTable();
-            }
 
-            using (ExcelPackage excelPackage = new ExcelPackage())
-            {
-                var workSheet = excelPackage.Workbook.Worksheets.Add(fistSheetName);
-                workSheet.Cells[1, 1].LoadFromDataTable(batchSizeDataTable, true);
-                excelPackage.SaveAs(destFileInfo);
-            }
-            int sizeOfBatchInKb = Convert.ToInt32(destFileInfo.Length / 1024);
-            int loopCounter = (sizeOfOutputFileInMb * 1024 / sizeOfBatchInKb) + 1;
+            if (File.Exists(outputFilePath)) { File.Delete(outputFilePath); }
 
-            if (batchSize * loopCounter > 1000000)
+            batchSize = 1000;
+            batchSizeDataTable = CreateBatchSizeTable(batchSize, datatable);
+            SaveTableToExcel(batchSizeDataTable, firstSheetName, isFirstRowAsColumnNames, true, ref destFileInfo);
+            sizeOfBatchInKb = Convert.ToInt32(destFileInfo.Length / 1024);
+            desiredRows = Convert.ToInt32(batchSize * (((sizeOfOutputFileInMb * 1024) / (decimal)sizeOfBatchInKb)));
+            // making optimal batch size
+            if (sizeOfBatchInKb < 1024 && desiredRows > batchSize)
             {
-                Console.WriteLine("The generated file would exceed excel row limit of ~1 million rows. Please reduce the size of excel file to be generated or increase the data in rows of sample excel file.");
+                int optimalBatchSizeInMb = sizeOfOutputFileInMb >= 5 ? 5 : 1; // // 5 mb or 1 mb batch
+                batchSize = Convert.ToInt32(batchSize * ((optimalBatchSizeInMb * 1024) / (decimal)sizeOfBatchInKb));
+                batchSizeDataTable = CreateBatchSizeTable(batchSize, batchSizeDataTable);
+                SaveTableToExcel(batchSizeDataTable, firstSheetName, isFirstRowAsColumnNames, false, ref destFileInfo);
+                sizeOfBatchInKb = Convert.ToInt32(destFileInfo.Length / 1024);
+                desiredRows = Convert.ToInt32(batchSize * (((sizeOfOutputFileInMb * 1024) / (decimal)sizeOfBatchInKb)));
+            }
+            if (desiredRows > 1000000)
+            {
+                Console.WriteLine("The generated file would exceed excel row limit of ~1 million rows. Please try one or more of the following: a) Increase number of columns in sample excel file. b) Increase data in rows of sample excel file. c) Reduce the size of output file to be generated. ");
                 return;
             }
-            Int32 updateRow = batchSize + 2;
+
+            int loopCounter = (sizeOfOutputFileInMb * 1024 / sizeOfBatchInKb) + 1;
+            int lastBatchRows = (desiredRows % batchSize);
+            bool isLastBatchResizeRequired = batchSize - lastBatchRows > 0;
+            int updateRow, updateRowHeaderAdjuster;
+            updateRowHeaderAdjuster = isFirstRowAsColumnNames ? 2 : 1;
+            updateRow = (loopCounter > 1 ? batchSize : lastBatchRows) + updateRowHeaderAdjuster;
             Console.WriteLine("Iteration: 0");
-            Console.WriteLine($"Rows: {updateRow - 2}");
+            Console.WriteLine($"Rows: {updateRow - updateRowHeaderAdjuster}");
             if (loopCounter > 1)
             {
                 using (ExcelPackage excelPackage = new ExcelPackage(destFileInfo))
@@ -100,10 +106,19 @@ namespace FileGenerator
                     for (int i = 1; i < loopCounter; i++)
                     {
                         Console.WriteLine($"Iteration: {i}");
-                        updateRow = i * batchSize + 2;
-                        Console.WriteLine($"Rows: {batchSize + updateRow - 2}");
+                        updateRow = i * batchSize + updateRowHeaderAdjuster;
+                        // Adjusting rows of last batch
+                        if (i == loopCounter - 1 && isLastBatchResizeRequired)
+                        {
+                            batchSizeDataTable = batchSizeDataTable.AsEnumerable().Take(lastBatchRows).CopyToDataTable();
+                            Console.WriteLine($"Rows: {updateRow + lastBatchRows - updateRowHeaderAdjuster}");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Rows: {batchSize + updateRow - updateRowHeaderAdjuster}");
+                        }
                         // Adding cells data
-                        ExcelWorksheet worksheet = excelPackage.Workbook.Worksheets[fistSheetName];
+                        ExcelWorksheet worksheet = excelPackage.Workbook.Worksheets[firstSheetName];
                         worksheet.Cells[updateRow, 1].LoadFromDataTable(batchSizeDataTable, false);
                     }
 
@@ -114,11 +129,53 @@ namespace FileGenerator
                 }
                 updateRow += batchSize;
             }
+            else
+            {
+                if (isLastBatchResizeRequired)
+                { batchSizeDataTable = batchSizeDataTable.AsEnumerable().Take(lastBatchRows).CopyToDataTable(); }
+                SaveTableToExcel(batchSizeDataTable, firstSheetName, isFirstRowAsColumnNames, false, ref destFileInfo);
+            }
 
             Console.WriteLine("");
             Console.WriteLine("******************");
-            Console.WriteLine($"File of size ~{sizeOfOutputFileInMb} Mb having {updateRow - 2} data rows created successfully.");
+            Console.WriteLine($"File of size ~{sizeOfOutputFileInMb} Mb having {desiredRows} data rows created successfully.");
             Console.WriteLine("******************");
         }
+
+        private static DataTable CreateBatchSizeTable(int batchSize, DataTable datatable)
+        {
+            DataTable batchSizeDataTable = null;
+            if (datatable.Rows.Count < batchSize)
+            {
+                batchSizeDataTable = datatable.Clone();
+                while (batchSizeDataTable.Rows.Count < batchSize)
+                {
+                    datatable.AsEnumerable().CopyToDataTable(batchSizeDataTable, LoadOption.Upsert);
+                }
+            }
+            else
+            {
+                batchSizeDataTable = datatable;
+            }
+            return GetBatchSizeTable(batchSize, batchSizeDataTable);
+        }
+
+        private static DataTable GetBatchSizeTable(int batchSize, DataTable datatable)
+        {
+            return datatable.AsEnumerable().Take(batchSize).CopyToDataTable();
+        }
+
+        private static void SaveTableToExcel(DataTable datatable, string firstSheetName, bool isFirstRowAsColumnNames, bool createFile, ref FileInfo fileInfo)
+        {
+            ExcelWorksheet workSheet = null;
+            using (ExcelPackage excelPackage = createFile ? new ExcelPackage() : new ExcelPackage(fileInfo))
+            {
+                workSheet = createFile ? excelPackage.Workbook.Worksheets.Add(firstSheetName) : excelPackage.Workbook.Worksheets[firstSheetName];
+                workSheet.Cells[1, 1].LoadFromDataTable(datatable, isFirstRowAsColumnNames);
+                excelPackage.SaveAs(fileInfo);
+                excelPackage.File.Refresh();
+            }
+        }
+
     }
 }
