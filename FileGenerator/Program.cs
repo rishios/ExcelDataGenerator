@@ -68,8 +68,6 @@ namespace FileGenerator
                 }
             }
 
-            if (File.Exists(outputFilePath)) { File.Delete(outputFilePath); }
-
             batchSize = 1000;
             batchSizeDataTable = CreateBatchSizeTable(batchSize, datatable);
             SaveTableToExcel(batchSizeDataTable, firstSheetName, isFirstRowAsColumnNames, true, ref destFileInfo);
@@ -94,31 +92,29 @@ namespace FileGenerator
             int loopCounter = (sizeOfOutputFileInMb * 1024 / sizeOfBatchInKb) + 1;
             int lastBatchRows = (desiredRows % batchSize);
             bool isLastBatchResizeRequired = batchSize - lastBatchRows > 0;
-            int updateRow, updateRowHeaderAdjuster;
-            updateRowHeaderAdjuster = isFirstRowAsColumnNames ? 2 : 1;
-            updateRow = (loopCounter > 1 ? batchSize : lastBatchRows) + updateRowHeaderAdjuster;
-            Console.WriteLine("Iteration: 0");
-            Console.WriteLine($"Rows: {updateRow - updateRowHeaderAdjuster}");
+            int updateRow, updateRowHeaderAdjuster = isFirstRowAsColumnNames ? 2 : 1;
+            long totalRows = batchSize;
             if (loopCounter > 1)
             {
+                Console.WriteLine("Iteration: 0");
+                Console.WriteLine($"Rows: {totalRows}");
                 using (ExcelPackage excelPackage = new ExcelPackage(destFileInfo))
                 {
+                    ExcelWorksheet worksheet = excelPackage.Workbook.Worksheets[firstSheetName];
                     for (int i = 1; i < loopCounter; i++)
                     {
-                        Console.WriteLine($"Iteration: {i}");
-                        updateRow = i * batchSize + updateRowHeaderAdjuster;
-                        // Adjusting rows of last batch
-                        if (i == loopCounter - 1 && isLastBatchResizeRequired)
+                        if (i < loopCounter - 1) { totalRows += batchSize; }
+                        else if (isLastBatchResizeRequired) // Adjusting rows of last batch
                         {
+                            totalRows += lastBatchRows;
                             batchSizeDataTable = batchSizeDataTable.AsEnumerable().Take(lastBatchRows).CopyToDataTable();
-                            Console.WriteLine($"Rows: {updateRow + lastBatchRows - updateRowHeaderAdjuster}");
                         }
-                        else
-                        {
-                            Console.WriteLine($"Rows: {batchSize + updateRow - updateRowHeaderAdjuster}");
-                        }
+                        Console.WriteLine($"Iteration: {i}");
+                        Console.WriteLine($"Rows: {totalRows}");
+
                         // Adding cells data
-                        ExcelWorksheet worksheet = excelPackage.Workbook.Worksheets[firstSheetName];
+                        updateRow = i * batchSize + updateRowHeaderAdjuster;
+                        //ExcelWorksheet worksheet = excelPackage.Workbook.Worksheets[firstSheetName];
                         worksheet.Cells[updateRow, 1].LoadFromDataTable(batchSizeDataTable, false);
                     }
 
@@ -127,18 +123,22 @@ namespace FileGenerator
                     excelPackage.SaveAs(destFileInfo);
                     Console.WriteLine($"File save on disk completed in {(DateTime.Now - dt).TotalMinutes} minutes.");
                 }
-                updateRow += batchSize;
             }
             else
             {
                 if (isLastBatchResizeRequired)
-                { batchSizeDataTable = batchSizeDataTable.AsEnumerable().Take(lastBatchRows).CopyToDataTable(); }
-                SaveTableToExcel(batchSizeDataTable, firstSheetName, isFirstRowAsColumnNames, false, ref destFileInfo);
+                {
+                    totalRows = totalRows - batchSize + lastBatchRows;
+                    batchSizeDataTable = batchSizeDataTable.AsEnumerable().Take(lastBatchRows).CopyToDataTable();
+                    SaveTableToExcel(batchSizeDataTable, firstSheetName, isFirstRowAsColumnNames, true, ref destFileInfo);
+                }
+                Console.WriteLine("Iteration: 0");
+                Console.WriteLine($"Rows: {totalRows}");
             }
 
             Console.WriteLine("");
             Console.WriteLine("******************");
-            Console.WriteLine($"File of size ~{sizeOfOutputFileInMb} Mb having {desiredRows} data rows created successfully.");
+            Console.WriteLine($"File of size ~{sizeOfOutputFileInMb} Mb having {totalRows} data rows created successfully.");
             Console.WriteLine("******************");
         }
 

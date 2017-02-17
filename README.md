@@ -23,4 +23,4 @@ FileGenerator.exe and FileGenerator.exe.config to generate excel files.
 ## Note:
 1. It generates data of only first sheet.
 2. If the system is not having sufficient RAM to generate output file then system out of memory exception will be raised.
-3. It is using customized ExcelDataReader (https://github.com/rishios/ExcelDataGenerator) and EPPlus (https://github.com/pruiz/EPPlus). Thanks to their makers.
+3. It is using customized ExcelDataReader (https://github.com/rishios/ExcelDataGenerator) and EPPlus. Thanks to their makers.
